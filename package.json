@@ -1,0 +1,25 @@
+{
+  "name": "student-todo-assistant",
+  "version": "0.2.0",
+  "description": "大学生智能待办助手 - AI驱动的任务管理系统",
+  "main": "index.html",
+  "scripts": {
+    "dev": "python -m http.server 8000",
+    "serve": "npx serve",
+    "deploy": "vercel --prod"
+  },
+  "keywords": [
+    "todo",
+    "student",
+    "ai",
+    "qwen",
+    "pwa",
+    "education"
+  ],
+  "author": "Claude Code",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/你的用户名/student-todo-assistant.git"
+  }
+}
