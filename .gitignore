@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 环境变量（含 API Key，严禁提交）
+.env
+.env.local
+.env.*.local
+*.env
+
+# 腾讯云 SCF
+.serverless/
+
+# Vercel
+.vercel/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.idea/
+*.suo
+
+# 日志
+*.log
+
+# 敏感数据文件（如 API Key CSV）
+*.csv
