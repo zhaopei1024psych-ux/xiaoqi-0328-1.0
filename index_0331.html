@@ -741,6 +741,12 @@ input:checked + .slider:before {
 <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="App.handleImageUpload(event)">
 
 <script>
+// 后端 API 地址配置（本地/Vercel 用相对路径，腾讯云 SCF 填完整 URL）
+const API_BASE = {
+  chat: '/api/chat',
+  vision: '/api/vision'
+};
+
 const App = {
   data: {
     todos: [],
@@ -1034,7 +1040,7 @@ const App = {
       return await this.callKimiDirect(userInput, conversationHistory);
     }
     // Vercel代理模式
-    const response = await fetch('/api/chat', {
+    const response = await fetch(API_BASE.chat, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userInput, memories: this.data.memories, conversationHistory })
@@ -1387,7 +1393,7 @@ tasks为空数组当needMoreInfo=true时。
     if (this.data.apiKey) {
       return await this.callKimiVisionDirect(base64, type);
     }
-    const response = await fetch('/api/vision', {
+    const response = await fetch(API_BASE.vision, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: base64, type })
