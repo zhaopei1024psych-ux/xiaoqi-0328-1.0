@@ -1035,14 +1035,13 @@ const App = {
   },
 
   async callQwenAPI(userInput, conversationHistory = []) {
-    // 本地直连模式：有本地API Key时直接调用Kimi
-    if (this.data.apiKey) {
-      return await this.callKimiDirect(userInput, conversationHistory);
-    }
-    // Vercel代理模式
+    // 始终走 SCF 代理，避免 GitHub Pages 直连 Kimi 的跨域问题
+    // 若用户填了本地 API Key，通过请求头传给 SCF 使用
+    const headers = { 'Content-Type': 'application/json' };
+    if (this.data.apiKey) headers['X-Api-Key'] = this.data.apiKey;
     const response = await fetch(API_BASE.chat, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ userInput, memories: this.data.memories, conversationHistory })
     });
     if (!response.ok) {
@@ -1389,13 +1388,12 @@ tasks为空数组当needMoreInfo=true时。
   },
 
   async callVisionAPI(base64, type) {
-    // 本地直连模式
-    if (this.data.apiKey) {
-      return await this.callKimiVisionDirect(base64, type);
-    }
+    // 始终走 SCF 代理，若用户填了本地 API Key 通过请求头传给 SCF
+    const headers = { 'Content-Type': 'application/json' };
+    if (this.data.apiKey) headers['X-Api-Key'] = this.data.apiKey;
     const response = await fetch(API_BASE.vision, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ image: base64, type })
     });
     if (!response.ok) {

@@ -3,7 +3,7 @@
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Api-Key',
   'Content-Type': 'application/json'
 };
 
@@ -17,7 +17,9 @@ exports.main_handler = async (event) => {
     return { statusCode: 200, headers: CORS_HEADERS, body: '' };
   }
 
-  const apiKey = process.env.KIMI_API_KEY;
+  // 优先用请求头里的 key（前端用户自己的），其次用环境变量
+  const headers = event.headers || {};
+  const apiKey = headers['x-api-key'] || headers['X-Api-Key'] || process.env.KIMI_API_KEY;
   if (!apiKey) return reply(500, { error: 'API Key not configured' });
 
   let body;
