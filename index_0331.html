@@ -443,6 +443,52 @@ textarea.input {
   font-size: 11px;
 }
 
+.week-course {
+  background: #e8f5e9;
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  border-left: 3px solid #4caf50;
+}
+
+.week-course-title {
+  font-weight: 500;
+  color: #2e7d32;
+}
+
+.week-course-time {
+  font-size: 11px;
+  color: #388e3c;
+}
+
+.week-calendar-event {
+  background: #fff3e0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  border-left: 3px solid #ff9800;
+}
+
+.week-calendar-event-title {
+  font-weight: 500;
+  color: #e65100;
+}
+
+.course-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4caf50;
+}
+
+.event-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff9800;
+}
 
 .settings-label {
   font-size: 16px;
@@ -1251,7 +1297,9 @@ const App = {
         if (!result.events || result.events.length === 0) {
           this.showToast('未识别到日程信息，请尝试更清晰的图片', 'error'); return;
         }
-        this.showVisionPreview('calendar', result.events);
+        const calItems = result.events;
+        if (result.semester) calItems._semester = result.semester;
+        this.showVisionPreview('calendar', calItems);
       } else if (type === 'task') {
         if (!result.tasks || result.tasks.length === 0) {
           this.showToast('未识别到任务信息，请尝试截图更清晰的任务内容', 'error'); return;
@@ -1307,7 +1355,8 @@ const App = {
       listHtml = items.map(e => `
         <div class="card" style="margin-bottom:8px;">
           <div style="font-weight:600;">${e.title}</div>
-          <div style="font-size:13px;color:var(--primary);margin-top:4px;">${e.date}</div>
+          <div style="font-size:13px;color:var(--primary);margin-top:4px;">${e.date_start && e.date_end && e.date_start !== e.date_end ? e.date_start + ' 至 ' + e.date_end : (e.date || e.date_start || '')}</div>
+          ${e.type ? `<div style="font-size:12px;color:var(--text-secondary);">${{'semester_start':'学期开始','semester_end':'学期结束','exam_week':'考试周','midterm':'期中考试','holiday':'节假日','makeup_day':'补课/调休','graduation':'毕业相关','other':'其他'}[e.type]||e.type}</div>` : ''}
         </div>`).join('');
     }
     modal.innerHTML = `
@@ -1342,10 +1391,13 @@ const App = {
       });
       this.saveData();
       this.renderCourses();
+      this.renderCalendar();
     } else if (type === 'calendar') {
       if (!this.data.calendar) this.data.calendar = {};
-      this.data.calendar.events = items;
+      if (items._semester) this.data.calendar.semester = items._semester;
+      this.data.calendar.events = items.filter ? items.filter(() => true) : items;
       this.saveData();
+      this.renderCalendar();
     }
     this.closeVisionPreview();
     this.showToast(`成功导入 ${items.length} 条数据`);
@@ -1688,6 +1740,49 @@ const App = {
     document.querySelectorAll('.modal').forEach(m => m.classList.remove('active'));
   },
 
+  // ===== 日历辅助：获取某天的课程 =====
+  getCoursesForDate(date) {
+    if (!this.data.courses || !this.data.calendar) return [];
+    const semesterStart = this.data.calendar.semesterStart;
+    if (!semesterStart) return [];
+
+    const start = new Date(semesterStart);
+    start.setHours(0, 0, 0, 0);
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+
+    const diffDays = Math.floor((d - start) / 86400000);
+    if (diffDays < 0) return [];
+    const weekNum = Math.floor(diffDays / 7) + 1;  // 第几教学周
+    const dayOfWeek = d.getDay() === 0 ? 7 : d.getDay();  // 1=周一...7=周日
+
+    const result = [];
+    this.data.courses.forEach(course => {
+      course.schedule.forEach(s => {
+        if (s.weekday !== dayOfWeek) return;
+        const ws = s.weekStart || 1;
+        const we = s.weekEnd || 18;
+        if (weekNum >= ws && weekNum <= we) {
+          result.push({ name: course.name, startTime: s.startTime, endTime: s.endTime, location: course.location });
+        }
+      });
+    });
+    result.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+    return result;
+  },
+
+  // ===== 日历辅助：获取某天的校历事件 =====
+  getCalendarEventsForDate(date) {
+    if (!this.data.calendar || !this.data.calendar.events) return [];
+    const dateStr = new Date(date).toISOString().split('T')[0];
+    return this.data.calendar.events.filter(e => {
+      if (e.date_start && e.date_end) {
+        return dateStr >= e.date_start && dateStr <= e.date_end;
+      }
+      return e.date === dateStr;
+    });
+  },
+
   // ===== 日历功能 =====
   setCalendarView(view) {
     this.calendarView = view;
@@ -1782,16 +1877,30 @@ const App = {
 
     // 查找当天任务
     const dateStr = new Date(year, month, day).toISOString().split('T')[0];
+    const cellDate = new Date(year, month, day);
     const dayTasks = this.data.todos.filter(todo =>
       todo.deadline && todo.deadline.startsWith(dateStr)
     );
+    const dayCourses = this.getCoursesForDate(cellDate);
+    const dayEvents = this.getCalendarEventsForDate(cellDate);
 
-    if (dayTasks.length > 0) {
+    const hasAny = dayTasks.length > 0 || dayCourses.length > 0 || dayEvents.length > 0;
+    if (hasAny) {
       const taskDots = document.createElement('div');
       taskDots.className = 'day-tasks';
       dayTasks.slice(0, 3).forEach(() => {
         const dot = document.createElement('div');
         dot.className = 'task-dot';
+        taskDots.appendChild(dot);
+      });
+      dayCourses.slice(0, 2).forEach(() => {
+        const dot = document.createElement('div');
+        dot.className = 'course-dot';
+        taskDots.appendChild(dot);
+      });
+      dayEvents.slice(0, 1).forEach(() => {
+        const dot = document.createElement('div');
+        dot.className = 'event-dot';
         taskDots.appendChild(dot);
       });
       cell.appendChild(taskDots);
@@ -1833,8 +1942,36 @@ const App = {
       const dayTasks = this.data.todos.filter(todo =>
         todo.deadline && todo.deadline.startsWith(dateStr)
       );
+      const dayCourses = this.getCoursesForDate(date);
+      const dayEvents = this.getCalendarEventsForDate(date);
 
-      dayTasks.forEach(todo => {
+      // 校历事件
+      dayEvents.forEach(ev => {
+        const evDiv = document.createElement('div');
+        evDiv.className = 'week-calendar-event';
+        const title = document.createElement('div');
+        title.className = 'week-calendar-event-title';
+        title.textContent = ev.title;
+        evDiv.appendChild(title);
+        dayDiv.appendChild(evDiv);
+      });
+
+      // 课程
+      dayCourses.forEach(c => {
+        const courseDiv = document.createElement('div');
+        courseDiv.className = 'week-course';
+        const title = document.createElement('div');
+        title.className = 'week-course-title';
+        title.textContent = c.name;
+        courseDiv.appendChild(title);
+        const time = document.createElement('div');
+        time.className = 'week-course-time';
+        time.textContent = `${c.startTime}-${c.endTime}${c.location ? ' · ' + c.location : ''}`;
+        courseDiv.appendChild(time);
+        dayDiv.appendChild(courseDiv);
+      });
+
+      // 待办任务
         const taskDiv = document.createElement('div');
         taskDiv.className = 'week-task';
 
@@ -1869,14 +2006,28 @@ const App = {
     const dayTasks = this.data.todos.filter(todo =>
       todo.deadline && todo.deadline.startsWith(dateStr)
     );
+    const dayCourses = this.getCoursesForDate(date);
+    const dayEvents = this.getCalendarEventsForDate(date);
 
-    if (dayTasks.length === 0) {
-      alert(`${month + 1}月${day}日 无任务`);
-      return;
+    const lines = [];
+    if (dayEvents.length > 0) {
+      lines.push('【校历】');
+      dayEvents.forEach(e => lines.push(`• ${e.title}`));
+    }
+    if (dayCourses.length > 0) {
+      lines.push('【课程】');
+      dayCourses.forEach(c => lines.push(`• ${c.startTime} ${c.name}${c.location ? ' @' + c.location : ''}`));
+    }
+    if (dayTasks.length > 0) {
+      lines.push('【待办】');
+      dayTasks.forEach(t => lines.push(`• ${t.title}`));
     }
 
-    const taskList = dayTasks.map(t => `• ${t.title}`).join('\n');
-    alert(`${month + 1}月${day}日 任务：\n\n${taskList}`);
+    if (lines.length === 0) {
+      alert(`${month + 1}月${day}日 无安排`);
+      return;
+    }
+    alert(`${month + 1}月${day}日\n\n${lines.join('\n')}`);
   }
 };
 
