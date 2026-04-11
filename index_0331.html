@@ -617,7 +617,7 @@ input:checked + .slider:before {
       <div class="settings-item" style="flex-direction:column;align-items:flex-start;gap:8px;">
         <div class="settings-label">Kimi API Key（本地调试用）</div>
         <input type="password" id="apiKeyInput" class="input" placeholder="sk-..." style="margin-top:0;">
-        <div style="font-size:12px;color:var(--text-secondary)">填写后本地直连Kimi API，无需部署到Vercel。部署时请在Vercel环境变量设置 KIMI_API_KEY。</div>
+        <div style="font-size:12px;color:var(--text-secondary)">填写后通过 SCF 调用 Kimi API。部署时请在腾讯云 SCF 环境变量设置 KIMI_API_KEY（无需填写此处）。</div>
         <button class="btn" onclick="App.saveApiKey()">保存 API Key</button>
       </div>
 
@@ -741,7 +741,7 @@ input:checked + .slider:before {
 <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="App.handleImageUpload(event)">
 
 <script>
-// 后端 API 地址配置（本地/Vercel 用相对路径，腾讯云 SCF 填完整 URL）
+// 后端 API 地址配置（腾讯云 SCF 函数URL）
 const API_BASE = {
  chat: 'https://1419745244-be5uxla9bw.ap-shanghai.tencentscf.com',   // CHAT_URL
   vision: 'https://1419745244-57z71391dg.ap-shanghai.tencentscf.com'  // VISION_URL
@@ -869,7 +869,7 @@ const App = {
     btn.textContent = '解析中...';
 
     try {
-      const result = await this.callQwenAPI(input, this.conversationState.history);
+      const result = await this.callKimiAPI(input, this.conversationState.history);
 
       // 记录对话历史
       this.conversationState.history.push({ role: 'user', content: input });
@@ -1034,15 +1034,18 @@ const App = {
     this.saveData();
   },
 
-  async callQwenAPI(userInput, conversationHistory = []) {
+  async callKimiAPI(userInput, conversationHistory = []) {
     // 始终走 SCF 代理，避免 GitHub Pages 直连 Kimi 的跨域问题
-    // 若用户填了本地 API Key，通过请求头传给 SCF 使用
-    const headers = { 'Content-Type': 'application/json' };
-    if (this.data.apiKey) headers['X-Api-Key'] = this.data.apiKey;
+    // 若用户填了本地 API Key，放入 body 传给 SCF（避免自定义 header 触发 CORS 预检）
     const response = await fetch(API_BASE.chat, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ userInput, memories: this.data.memories, conversationHistory })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userInput,
+        memories: this.data.memories,
+        conversationHistory,
+        ...(this.data.apiKey ? { apiKey: this.data.apiKey } : {})
+      })
     });
     if (!response.ok) {
       let errMsg = `HTTP ${response.status}`;
@@ -1051,7 +1054,7 @@ const App = {
         errMsg = errData.error || errData.details || errMsg;
       } catch(e) {}
       if (response.status === 500 && errMsg.includes('API Key')) {
-        throw new Error('未配置API Key。请在设置页面填写Kimi API Key，或将KIMI_API_KEY设置为Vercel环境变量。');
+        throw new Error('未配置API Key。请在设置页面填写Kimi API Key，或在腾讯云SCF环境变量设置 KIMI_API_KEY。');
       }
       throw new Error('API调用失败：' + errMsg);
     }
@@ -1388,13 +1391,15 @@ tasks为空数组当needMoreInfo=true时。
   },
 
   async callVisionAPI(base64, type) {
-    // 始终走 SCF 代理，若用户填了本地 API Key 通过请求头传给 SCF
-    const headers = { 'Content-Type': 'application/json' };
-    if (this.data.apiKey) headers['X-Api-Key'] = this.data.apiKey;
+    // 始终走 SCF 代理，apiKey 放入 body 避免自定义 header 触发 CORS 预检
     const response = await fetch(API_BASE.vision, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ image: base64, type })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: base64,
+        type,
+        ...(this.data.apiKey ? { apiKey: this.data.apiKey } : {})
+      })
     });
     if (!response.ok) {
       let errMsg = `HTTP ${response.status}`;

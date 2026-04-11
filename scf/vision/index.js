@@ -16,16 +16,16 @@ exports.main_handler = async (event) => {
     return { statusCode: 200, headers: CORS_HEADERS, body: '' };
   }
 
-  const headers = event.headers || {};
-  const apiKey = headers['x-api-key'] || headers['X-Api-Key'] || process.env.KIMI_API_KEY;
-  if (!apiKey) return reply(500, { error: 'API Key not configured' });
-
   let body;
   try {
     body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
   } catch {
     return reply(400, { error: 'Invalid JSON body' });
   }
+
+  // 优先用 body 里的 key（前端用户自己的），其次用环境变量
+  const apiKey = (body && body.apiKey) || process.env.KIMI_API_KEY;
+  if (!apiKey) return reply(500, { error: 'API Key not configured' });
 
   const { image, type } = body || {};
   if (!image) return reply(400, { error: 'image is required' });
