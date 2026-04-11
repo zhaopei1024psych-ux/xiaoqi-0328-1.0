@@ -54,7 +54,7 @@ git push origin main
 6. 点击**提交**
 7. 复制生成的 URL，格式类似：
    ```
-   https://xxxxxxxx.ap-shanghai.tencentserverless.com/release/
+   https://1419745244-be5uxla9bw.ap-shanghai.tencentscf.com
    ```
    **记录此 URL → 这是 `CHAT_URL`**
 
@@ -65,7 +65,8 @@ git push origin main
    - 执行方法：`index.main_handler`
 3. 环境变量同上（`KIMI_API_KEY`）
 4. 开启函数 URL
-5. 复制生成的 URL → **记录此 URL → 这是 `VISION_URL`**
+5. 复制生成的 URL → **记录此 URL →  
+vision URL:  https://1419745244-57z71391dg.ap-shanghai.tencentscf.com
 
 ---
 
@@ -84,8 +85,8 @@ const API_BASE = {
 
 ```javascript
 const API_BASE = {
-  chat: 'https://xxxxxxxx.ap-shanghai.tencentserverless.com/release/',   // CHAT_URL
-  vision: 'https://yyyyyyyy.ap-shanghai.tencentserverless.com/release/'  // VISION_URL
+  chat: 'https://1419745244-be5uxla9bw.ap-shanghai.tencentscf.com',   // CHAT_URL
+  vision: 'https://1419745244-57z71391dg.ap-shanghai.tencentscf.com'  // VISION_URL
 };
 ```
 
