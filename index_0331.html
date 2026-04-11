@@ -577,6 +577,8 @@ input:checked + .slider:before {
     <div class="card">
       <button class="btn" onclick="App.uploadCalendarImage()">📷 识别校历</button>
     </div>
+
+    <div class="card">
       <h3>校历设置</h3>
       <div class="settings-item">
         <div class="settings-label">学期开始日期</div>
@@ -612,13 +614,6 @@ input:checked + .slider:before {
           <input type="checkbox" id="darkModeToggle" onchange="App.toggleDarkMode()">
           <span class="slider"></span>
         </label>
-      </div>
-
-      <div class="settings-item" style="flex-direction:column;align-items:flex-start;gap:8px;">
-        <div class="settings-label">Kimi API Key（本地调试用）</div>
-        <input type="password" id="apiKeyInput" class="input" placeholder="sk-..." style="margin-top:0;">
-        <div style="font-size:12px;color:var(--text-secondary)">填写后通过 SCF 调用 Kimi API。部署时请在腾讯云 SCF 环境变量设置 KIMI_API_KEY（无需填写此处）。</div>
-        <button class="btn" onclick="App.saveApiKey()">保存 API Key</button>
       </div>
 
       <div class="settings-item">
@@ -793,18 +788,9 @@ const App = {
     }
     // API Key单独存储，不随数据导出
     this.data.apiKey = localStorage.getItem('kimiApiKey') || '';
-    setTimeout(() => {
-      const input = document.getElementById('apiKeyInput');
-      if (input && this.data.apiKey) input.value = this.data.apiKey;
-    }, 0);
   },
 
-  saveApiKey() {
-    const key = document.getElementById('apiKeyInput').value.trim();
-    this.data.apiKey = key;
-    localStorage.setItem('kimiApiKey', key);
-    this.showToast(key ? 'API Key 已保存' : 'API Key 已清除');
-  },
+  saveApiKey() {},
 
   showToast(msg, type) {
     const toast = document.createElement('div');
@@ -1061,115 +1047,6 @@ const App = {
     return await response.json();
   },
 
-  async callKimiDirect(userInput, conversationHistory = []) {
-    const memories = this.data.memories;
-    const systemPrompt = this.buildSystemPrompt(memories);
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...conversationHistory.slice(-4),
-      { role: 'user', content: userInput }
-    ];
-    const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.data.apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ model: 'moonshot-v1-8k', messages, temperature: 0.3 })
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      let errMsg = `Kimi API错误(${response.status})`;
-      try {
-        const errData = JSON.parse(errText);
-        if (errData.error && errData.error.message) errMsg = errData.error.message;
-        else if (response.status === 401) errMsg = 'API Key无效，请检查设置中的API Key';
-        else if (response.status === 429) errMsg = 'API调用频率超限，请稍后再试';
-        else if (response.status === 402) errMsg = 'API额度不足，请充值后重试';
-      } catch(e) {}
-      throw new Error(errMsg);
-    }
-    const data = await response.json();
-    const content = data.choices[0].message.content;
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) return JSON.parse(jsonMatch[0]);
-    return { tasks: [], rawContent: content, error: 'Could not parse JSON from response' };
-  },
-
-  buildSystemPrompt(memories) {
-    const now = new Date().toISOString();
-    const memStr = memories.length > 0
-      ? memories.map(m => `- ${m.key}: ${m.value}${m.description ? ' (' + m.description + ')' : ''}`).join('\n')
-      : '无';
-    return `你是大学生任务拆分助手。当前时间：${now}
-
-【用户记忆】
-${memStr}
-
-━━━ 核心规则：何时引导 vs 何时拆分 ━━━
-
-【必须引导（needMoreInfo=true），不得直接拆分的情况】
-用户的输入满足以下任意一条，必须先提问，禁止直接生成任务列表：
-1. 只提到任务类型但没有说明具体内容（如"写论文"、"做PPT"、"大创项目"、"备考"、"大作业"）
-2. 没有提供截止日期或考试/汇报时间
-3. 不清楚任务的具体要求、主题、字数、页数等关键信息
-4. 是首次提到该任务（对话历史为空或没有关于该任务的上下文）
-
-【可以直接解析（needMoreInfo=false）的情况】
-必须同时满足：
-- 用户提供了明确的截止时间
-- 用户说明了具体内容/要求（如"3000字""10页PPT""考某门科目"）
-- 这是多轮对话的最后一步：用户已经在前几轮回答了你的问题，现在信息足够了
-
-━━━ 引导对话规则 ━━━
-
-每轮只问一个最重要的问题（不要一次列出4-5个问题）。按优先级依次询问：
-第1轮：任务的具体主题/内容是什么？（对于论文/PPT/大作业）或 考试科目？（对于备考）
-第2轮：截止日期/汇报/考试时间是什么时候？
-第3轮（如需要）：有其他特殊要求吗？（字数、页数、小组还是个人等）
-
-在question字段写清晰的追问句，在suggestions字段给出2-4个该问题的示例答案（让用户点击快速回答）。
-
-━━━ 任务拆分规则（仅在信息充足时执行）━━━
-
-【步骤要求】
-- 按实际做事流程拆分，每步具体可执行
-- description字段注明：哪些步骤可用AI辅助，遇到卡点怎么解决
-- 步骤数量：简单任务3-4步，复杂任务5-8步，不要过多
-
-【截止日期分配规则（关键）】
-任务总截止日期为D，根据步骤所需时间从D往前倒推，每个步骤分配独立的deadline：
-- 最后一步（检查/提交）的deadline = D（总截止日期）
-- 倒数第二步的deadline = D - 1天
-- 根据每步预估耗时（0.5天/1天/2天/3天）继续往前推
-- 第一步的deadline应在当前时间之后至少1天
-- 禁止所有步骤的deadline都设为同一时间
-
-PPT示例（总截止日期为4月10日）：
-步骤1"找模板+定结构" deadline=4月4日，步骤2"写脚本" deadline=4月6日，步骤3"制作PPT" deadline=4月8日，步骤4"美化+逐字稿" deadline=4月9日，步骤5"模拟演练" deadline=4月10日
-
-【任务类型参考模板】（仅作参考，根据用户实际情况调整，不要机械套用）
-- PPT类：找模板→写脚本→制作→美化→演练
-- 论文类：定题目→找文献→列提纲→写初稿→修改→格式检查
-- 大创项目：调研→方案→实验/开发→整理→报告→答辩
-- 备考：梳理知识点→刷题→模拟考→查漏补缺
-- 小组作业：分工→各自完成→汇总→检查→提交
-
-━━━ 输出格式 ━━━
-
-只返回合法JSON，不要有多余文字：
-{
-  "tasks": [{"title":"步骤名称","description":"具体描述，含卡点解法或AI辅助提示","deadline":"2026-04-01T20:00:00Z","course":"课程名称","type":"personal|group|exam|other"}],
-  "memoryUpdates": [{"action":"add|update|delete","key":"键名","value":"值","description":"描述"}],
-  "needMoreInfo": false,
-  "question": "（needMoreInfo=true时）单个追问句，简洁直接",
-  "suggestions": ["示例答案1","示例答案2","示例答案3"]
-}
-
-tasks为空数组当needMoreInfo=true时。
-【对话范围】仅处理学习任务、时间管理相关问题。`;
-  },
-
   addTodo(todo) {
     const newTodo = {
       id: Date.now().toString(),
@@ -1283,10 +1160,6 @@ tasks为空数组当needMoreInfo=true时。
     document.getElementById('todoDeadline').value = '';
     document.getElementById('todoType').value = 'personal';
     document.getElementById('todoModal').classList.add('active');
-  },
-
-  closeModal() {
-    document.getElementById('todoModal').classList.remove('active');
   },
 
   saveTodo() {
@@ -1407,51 +1280,6 @@ tasks为空数组当needMoreInfo=true时。
       throw new Error('图片识别失败：' + errMsg);
     }
     return await response.json();
-  },
-
-  async callKimiVisionDirect(base64, type) {
-    const prompts = {
-      schedule: `识别这张课程表图片，提取所有课程信息。只返回JSON，格式：
-{"courses":[{"name":"课程名称","teacher":"教师","location":"地点","dayOfWeek":1,"startTime":"08:00","endTime":"09:40","weeks":"1-16周"}]}`,
-      calendar: `识别这张校历图片，提取所有重要日期和事件。只返回JSON，格式：
-{"events":[{"title":"事件名称","date":"2026-09-01","type":"semester_start|exam|holiday|other"}]}`,
-      task: `识别图片中的待办任务信息（如作业通知、任务截图等），提取任务列表。只返回JSON，格式：
-{"tasks":[{"title":"任务标题","description":"详细描述","deadline":"2026-04-01T15:00:00","course":"课程名称","type":"personal|group|exam|other"}]}`
-    };
-    const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.data.apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'moonshot-v1-8k-vision-preview',
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: base64.startsWith('data:') ? base64 : `data:image/jpeg;base64,${base64}` } },
-            { type: 'text', text: prompts[type] || prompts.schedule }
-          ]
-        }],
-        temperature: 0.1
-      })
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      let errMsg = `Kimi Vision错误(${response.status})`;
-      try {
-        const errData = JSON.parse(errText);
-        if (response.status === 401) errMsg = 'API Key无效';
-        else if (response.status === 429) errMsg = '请求频率超限，请稍后重试';
-        else if (errData.error && errData.error.message) errMsg = errData.error.message;
-      } catch(e) {}
-      throw new Error(errMsg);
-    }
-    const data = await response.json();
-    const content = data.choices[0].message.content;
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) return JSON.parse(jsonMatch[0]);
-    throw new Error('无法解析识别结果，请重试');
   },
 
   showVisionPreview(type, items) {
