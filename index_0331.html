@@ -655,6 +655,14 @@ input:checked + .slider:before {
   <div class="container">
     <div class="card">
       <div class="settings-item">
+        <div class="settings-label">用户昵称</div>
+        <div style="display:flex;gap:8px;align-items:center;flex:1;">
+          <input type="text" id="userNameInput" class="input" placeholder="输入昵称，AI调度时使用" style="margin:0;flex:1;">
+          <button class="btn btn-secondary" onclick="App.saveUserName()" style="white-space:nowrap;">保存</button>
+        </div>
+      </div>
+
+      <div class="settings-item">
         <div class="settings-label">深色模式</div>
         <label class="switch">
           <input type="checkbox" id="darkModeToggle" onchange="App.toggleDarkMode()">
@@ -795,6 +803,7 @@ const App = {
     calendar: null,
     memories: [],
     apiKey: '',
+    userName: '',
     currentEditId: null
   },
 
@@ -805,6 +814,12 @@ const App = {
     this.renderCourses();
     this.renderHolidays();
     this.loadCalendarSettings();
+
+    // 恢复昵称到输入框
+    if (this.data.userName) {
+      const el = document.getElementById('userNameInput');
+      if (el) el.value = this.data.userName;
+    }
 
     // 初始化日历
     this.calendarView = 'month';
@@ -832,8 +847,15 @@ const App = {
       this.data.calendar = data.calendar || null;
       this.data.memories = data.memories || [];
     }
-    // API Key单独存储，不随数据导出
     this.data.apiKey = localStorage.getItem('kimiApiKey') || '';
+    this.data.userName = localStorage.getItem('userName') || '';
+  },
+
+  saveUserName() {
+    const name = document.getElementById('userNameInput').value.trim();
+    this.data.userName = name;
+    localStorage.setItem('userName', name);
+    this.showToast(name ? `昵称已保存：${name}` : '昵称已清空');
   },
 
   saveApiKey() {},
@@ -938,6 +960,9 @@ const App = {
           document.getElementById('aiInput').value = '';
           this.conversationState = { mode: 'normal', history: [], pendingTasks: null, visionItems: null, visionType: null };
           this.showToast(`成功添加 ${result.tasks.length} 个任务`);
+          if (result.scheduleNote) {
+            setTimeout(() => this.showToast('📅 ' + result.scheduleNote), 1800);
+          }
           this.hideBreakdownPrompt();
         }
       } else {
@@ -1053,10 +1078,13 @@ const App = {
         if (existing >= 0) {
           this.data.memories[existing].value = update.value;
           if (update.description) this.data.memories[existing].description = update.description;
+          if (update.category) this.data.memories[existing].category = update.category;
         } else {
           this.data.memories.push({
-            key: update.key, value: update.value,
-            type: typeof update.value, description: update.description || ''
+            key: update.key,
+            value: update.value,
+            description: update.description || '',
+            category: update.category || '通用'
           });
         }
       } else if (update.action === 'delete') {
@@ -1067,8 +1095,6 @@ const App = {
   },
 
   async callKimiAPI(userInput, conversationHistory = []) {
-    // 始终走 SCF 代理，避免 GitHub Pages 直连 Kimi 的跨域问题
-    // 若用户填了本地 API Key，放入 body 传给 SCF（避免自定义 header 触发 CORS 预检）
     const response = await fetch(API_BASE.chat, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1076,6 +1102,9 @@ const App = {
         userInput,
         memories: this.data.memories,
         conversationHistory,
+        courses: this.data.courses,
+        todos: this.data.todos.filter(t => t.status !== 'done'),
+        userName: this.data.userName,
         ...(this.data.apiKey ? { apiKey: this.data.apiKey } : {})
       })
     });
@@ -1304,7 +1333,15 @@ const App = {
         if (!result.tasks || result.tasks.length === 0) {
           this.showToast('未识别到任务信息，请尝试截图更清晰的任务内容', 'error'); return;
         }
-        this.showTaskPreview(result.tasks);
+        // 将识别到的任务信息注入 AI 对话，进入引导拆分流程
+        const taskSummary = result.tasks.map(t =>
+          `【${t.course || ''}】${t.title}${t.description ? '：' + t.description : ''}${t.deadline ? '，截止 ' + t.deadline : ''}`
+        ).join('\n');
+        const aiInput = document.getElementById('aiInput');
+        aiInput.value = `（截图识别到以下任务）\n${taskSummary}`;
+        this.showToast('识别完成，请补充信息后点击 AI 解析任务');
+        // 切换到待办页
+        this.switchTab('todo');
       }
     } catch (error) {
       this.showToast('识别失败：' + error.message, 'error');
@@ -1628,22 +1665,34 @@ const App = {
   renderMemories() {
     const list = document.getElementById('memoryList');
     if (this.data.memories.length === 0) {
-      list.innerHTML = '<p style="color: var(--text-secondary);">暂无记忆</p>';
+      list.innerHTML = '<p style="color: var(--text-secondary);">暂无记忆，AI 对话后会自动生成</p>';
       return;
     }
 
-    list.innerHTML = this.data.memories.map((m, i) => `
-      <div class="card" style="margin-bottom: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: start;">
-          <div style="flex: 1;">
-            <div style="font-weight: 500;">${m.key}</div>
-            <div style="color: var(--text-secondary); font-size: 14px; margin-top: 4px;">
-              值: ${m.value} (${m.type})
+    // 按类别分组
+    const groups = {};
+    this.data.memories.forEach((m, i) => {
+      const cat = m.category || '通用';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push({ ...m, _index: i });
+    });
+
+    const catOrder = ['学习习惯', '课程信息', '任务偏好', '通用'];
+    const sortedCats = [...new Set([...catOrder, ...Object.keys(groups)])].filter(c => groups[c]);
+
+    list.innerHTML = sortedCats.map(cat => `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:12px;color:var(--text-secondary);font-weight:600;margin-bottom:6px;padding:2px 8px;background:var(--bg);border-radius:4px;display:inline-block;">${cat}</div>
+        ${groups[cat].map(m => `
+          <div style="display:flex;justify-content:space-between;align-items:start;padding:8px 0;border-bottom:1px solid var(--border);">
+            <div style="flex:1;">
+              <span style="font-weight:500;">${m.key}</span>
+              <span style="color:var(--text-secondary);font-size:13px;margin-left:8px;">${m.value}</span>
+              ${m.description ? `<div style="color:var(--text-secondary);font-size:12px;margin-top:2px;">${m.description}</div>` : ''}
             </div>
-            ${m.description ? `<div style="color: var(--text-secondary); font-size: 14px; margin-top: 4px;">${m.description}</div>` : ''}
+            <button class="icon-btn" onclick="App.deleteMemory(${m._index})" style="font-size:14px;padding:2px 6px;">✕</button>
           </div>
-          <button class="icon-btn" onclick="App.deleteMemory(${i})">🗑️</button>
-        </div>
+        `).join('')}
       </div>
     `).join('');
   },
@@ -1663,7 +1712,6 @@ const App = {
   saveMemory() {
     const key = document.getElementById('memoryKey').value.trim();
     const value = document.getElementById('memoryValue').value.trim();
-    const type = document.getElementById('memoryType').value;
     const description = document.getElementById('memoryDesc').value.trim();
 
     if (!key || !value) {
@@ -1671,11 +1719,13 @@ const App = {
       return;
     }
 
-    let finalValue = value;
-    if (type === 'number') finalValue = parseFloat(value);
-    if (type === 'boolean') finalValue = value === 'true';
-
-    this.data.memories.push({ key, value: finalValue, type, description });
+    const existing = this.data.memories.findIndex(m => m.key === key);
+    if (existing >= 0) {
+      this.data.memories[existing].value = value;
+      if (description) this.data.memories[existing].description = description;
+    } else {
+      this.data.memories.push({ key, value, description, category: '通用' });
+    }
     this.saveData();
     this.renderMemories();
     this.closeAddMemoryModal();
@@ -1886,24 +1936,37 @@ const App = {
 
     const hasAny = dayTasks.length > 0 || dayCourses.length > 0 || dayEvents.length > 0;
     if (hasAny) {
-      const taskDots = document.createElement('div');
-      taskDots.className = 'day-tasks';
-      dayTasks.slice(0, 3).forEach(() => {
-        const dot = document.createElement('div');
-        dot.className = 'task-dot';
-        taskDots.appendChild(dot);
+      // 校历事件（橙色标签）
+      dayEvents.slice(0, 1).forEach(e => {
+        const tag = document.createElement('div');
+        tag.style.cssText = 'font-size:10px;color:#e65100;background:#fff3e0;border-radius:3px;padding:1px 4px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        tag.textContent = e.title;
+        cell.appendChild(tag);
       });
-      dayCourses.slice(0, 2).forEach(() => {
-        const dot = document.createElement('div');
-        dot.className = 'course-dot';
-        taskDots.appendChild(dot);
+      // 课程（绿色点）
+      if (dayCourses.length > 0) {
+        const taskDots = document.createElement('div');
+        taskDots.className = 'day-tasks';
+        dayCourses.slice(0, 2).forEach(() => {
+          const dot = document.createElement('div');
+          dot.className = 'course-dot';
+          taskDots.appendChild(dot);
+        });
+        cell.appendChild(taskDots);
+      }
+      // 待办标题（蓝色，最多2条）
+      dayTasks.slice(0, 2).forEach(t => {
+        const tag = document.createElement('div');
+        tag.style.cssText = 'font-size:10px;color:var(--primary);background:var(--bg);border-radius:3px;padding:1px 4px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        tag.textContent = t.title;
+        cell.appendChild(tag);
       });
-      dayEvents.slice(0, 1).forEach(() => {
-        const dot = document.createElement('div');
-        dot.className = 'event-dot';
-        taskDots.appendChild(dot);
-      });
-      cell.appendChild(taskDots);
+      if (dayTasks.length > 2) {
+        const more = document.createElement('div');
+        more.style.cssText = 'font-size:10px;color:var(--text-secondary);padding:1px 4px;';
+        more.textContent = `+${dayTasks.length - 2}`;
+        cell.appendChild(more);
+      }
     }
 
     cell.onclick = () => this.showDayTasks(year, month, day);
@@ -2010,25 +2073,59 @@ const App = {
     const dayCourses = this.getCoursesForDate(date);
     const dayEvents = this.getCalendarEventsForDate(date);
 
-    const lines = [];
-    if (dayEvents.length > 0) {
-      lines.push('【校历】');
-      dayEvents.forEach(e => lines.push(`• ${e.title}`));
-    }
-    if (dayCourses.length > 0) {
-      lines.push('【课程】');
-      dayCourses.forEach(c => lines.push(`• ${c.startTime} ${c.name}${c.location ? ' @' + c.location : ''}`));
-    }
-    if (dayTasks.length > 0) {
-      lines.push('【待办】');
-      dayTasks.forEach(t => lines.push(`• ${t.title}`));
+    // 构建浮层内容
+    let html = `<div style="font-weight:700;font-size:16px;margin-bottom:12px;">${month + 1}月${day}日</div>`;
+
+    if (dayEvents.length === 0 && dayCourses.length === 0 && dayTasks.length === 0) {
+      html += '<div style="color:var(--text-secondary);font-size:14px;">今天没有安排</div>';
     }
 
-    if (lines.length === 0) {
-      alert(`${month + 1}月${day}日 无安排`);
-      return;
+    if (dayEvents.length > 0) {
+      html += `<div style="font-size:12px;color:#e65100;font-weight:600;margin:8px 0 4px;">校历</div>`;
+      html += dayEvents.map(e => `
+        <div style="background:#fff3e0;padding:6px 10px;border-radius:6px;margin-bottom:4px;border-left:3px solid #ff9800;">
+          <div style="font-size:14px;">${e.title}</div>
+        </div>`).join('');
     }
-    alert(`${month + 1}月${day}日\n\n${lines.join('\n')}`);
+
+    if (dayCourses.length > 0) {
+      html += `<div style="font-size:12px;color:#2e7d32;font-weight:600;margin:8px 0 4px;">课程</div>`;
+      html += dayCourses.map(c => `
+        <div style="background:#e8f5e9;padding:6px 10px;border-radius:6px;margin-bottom:4px;border-left:3px solid #4caf50;">
+          <div style="font-size:14px;font-weight:500;">${c.name}</div>
+          <div style="font-size:12px;color:#388e3c;">${c.startTime}-${c.endTime}${c.location ? ' · ' + c.location : ''}</div>
+        </div>`).join('');
+    }
+
+    if (dayTasks.length > 0) {
+      html += `<div style="font-size:12px;color:var(--primary);font-weight:600;margin:8px 0 4px;">待办</div>`;
+      html += dayTasks.map(t => `
+        <div style="background:var(--bg);padding:6px 10px;border-radius:6px;margin-bottom:4px;border-left:3px solid var(--primary);cursor:pointer;" onclick="App.closeDayModal();App.editTodo('${t.id}')">
+          <div style="font-size:14px;">${t.title}</div>
+          ${t.deadline ? `<div style="font-size:12px;color:var(--text-secondary);">截止 ${new Date(t.deadline).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}</div>` : ''}
+        </div>`).join('');
+    }
+
+    // 显示浮层
+    let modal = document.getElementById('dayDetailModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'dayDetailModal';
+      modal.className = 'modal';
+      modal.onclick = (e) => { if (e.target === modal) this.closeDayModal(); };
+      document.body.appendChild(modal);
+    }
+    modal.innerHTML = `
+      <div class="modal-content" style="max-height:70vh;overflow-y:auto;">
+        ${html}
+        <button class="btn btn-secondary" onclick="App.closeDayModal()" style="margin-top:12px;width:100%;">关闭</button>
+      </div>`;
+    modal.style.display = 'flex';
+  },
+
+  closeDayModal() {
+    const modal = document.getElementById('dayDetailModal');
+    if (modal) modal.style.display = 'none';
   }
 };
 
