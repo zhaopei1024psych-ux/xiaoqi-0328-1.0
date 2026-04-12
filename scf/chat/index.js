@@ -28,13 +28,11 @@ function formatCourses(courses) {
 function formatDailyTaskLoad(todos) {
   if (!todos || todos.length === 0) return '无';
   const counts = {};
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const todayStr = new Date().toISOString().slice(0, 10);
   todos.forEach(t => {
-    if (!t.deadline || t.status === 'done') return;
+    if (!t.deadline || t.status === 'completed') return;
     const d = t.deadline.slice(0, 10);
-    const dt = new Date(d);
-    if (dt >= today) {
+    if (d >= todayStr) {
       counts[d] = (counts[d] || 0) + 1;
     }
   });
